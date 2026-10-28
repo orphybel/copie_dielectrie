@@ -1,7 +1,10 @@
+import copy
+import json
 import os
 import queue
 import re
 import shutil
+import sys
 import threading
 import tkinter as tk
 from tkinter import filedialog, messagebox, scrolledtext, ttk
@@ -13,8 +16,10 @@ import pythoncom
 # ======================
 # CONFIGURATION DES MODES
 # ======================
+# Valeurs d'origine. La configuration modifiée depuis le logiciel
+# (bouton « Configurer… ») est enregistrée dans modes.json à côté de l'exe.
 # SOURCE_CELLS : {cellule du .xls source : cellule de l'onglet cible}
-MODES = {
+DEFAULT_MODES = {
     "HubView-xT": {
         "TARGET_SHEET": "Test final (1_4)",
         "TARGET_EXT": ".xlsm",
@@ -63,7 +68,7 @@ MODES = {
     # J42 (test 100 V [1]...[8]) n'a pas de case dans l'onglet 1/4.
     "Poste de Locution": {
         "TARGET_SHEET": "Test final (1_4)",
-        "TARGET_EXT": ".xlsx",
+        "TARGET_EXT": ".xlsm",
         "SOURCE_CELLS": {
             "J9": "C16",
             "J10": "C17",
@@ -76,6 +81,82 @@ MODES = {
         },
     },
 }
+
+TARGET_EXTS = (".xlsm", ".xlsx")
+CELL_RE = re.compile(r"^[A-Z]{1,3}[1-9][0-9]*$")
+
+
+def app_dir():
+    # Exe PyInstaller : dossier de l'exe (et non le dossier temporaire _MEIxxxx)
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(sys.executable)
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+CONFIG_FILE = os.path.join(app_dir(), "modes.json")
+
+
+def validate_modes(modes):
+    """
+    Retourne la liste des erreurs (vide si la configuration est valide)
+    """
+    if not isinstance(modes, dict) or not modes:
+        return ["Aucun type de copie défini"]
+
+    errors = []
+    for name, cfg in modes.items():
+        prefix = f"« {name} » : "
+        if not str(name).strip():
+            errors.append("Un type de copie n'a pas de nom")
+        if not isinstance(cfg, dict):
+            errors.append(prefix + "configuration invalide")
+            continue
+        if not str(cfg.get("TARGET_SHEET", "")).strip():
+            errors.append(prefix + "onglet cible vide")
+        if cfg.get("TARGET_EXT") not in TARGET_EXTS:
+            errors.append(prefix + f"extension cible invalide ({cfg.get('TARGET_EXT')})")
+
+        cells = cfg.get("SOURCE_CELLS")
+        if not isinstance(cells, dict) or not cells:
+            errors.append(prefix + "aucune cellule à copier")
+            continue
+        for src, dst in cells.items():
+            if not CELL_RE.match(str(src)) or not CELL_RE.match(str(dst)):
+                errors.append(prefix + f"cellule invalide : {src} → {dst}")
+        targets = list(cells.values())
+        dups = sorted({str(d) for d in targets if targets.count(d) > 1})
+        if dups:
+            errors.append(prefix + f"cellule cible utilisée plusieurs fois : {', '.join(dups)}")
+    return errors
+
+
+def load_modes():
+    """
+    Retourne (modes, avertissement ou None)
+    """
+    if not os.path.exists(CONFIG_FILE):
+        return copy.deepcopy(DEFAULT_MODES), None
+    try:
+        with open(CONFIG_FILE, encoding="utf-8") as f:
+            modes = json.load(f)
+        errors = validate_modes(modes)
+    except (OSError, ValueError) as e:
+        errors = [str(e)]
+    if errors:
+        return copy.deepcopy(DEFAULT_MODES), (
+            f"Le fichier {CONFIG_FILE} est invalide, la configuration d'origine est utilisée.\n\n"
+            + "\n".join(errors[:10])
+        )
+    return modes, None
+
+
+def save_modes(modes):
+    # Écriture dans un fichier temporaire puis remplacement : un plantage
+    # pendant l'écriture ne laisse pas un modes.json à moitié écrit
+    tmp = CONFIG_FILE + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(modes, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, CONFIG_FILE)
 
 
 # ======================
@@ -186,7 +267,9 @@ class App(tk.Tk):
         self.xls_dir = tk.StringVar()
         self.target_dir = tk.StringVar()
         self.dest_dir = tk.StringVar()
-        self.mode = tk.StringVar(value="HubView-xT")
+
+        self.modes, config_warning = load_modes()
+        self.mode = tk.StringVar(value=next(iter(self.modes)))
 
         self.progress_var = tk.IntVar()
         self.progress_label = tk.StringVar(value="0 / 0")
@@ -202,6 +285,9 @@ class App(tk.Tk):
         self.protocol("WM_DELETE_WINDOW", self.on_close)
         self.poll_id = self.after(100, self.poll_queue)
 
+        if config_warning:
+            self.after_idle(lambda: messagebox.showwarning("Configuration", config_warning, parent=self))
+
     def destroy(self):
         self.after_cancel(self.poll_id)
         super().destroy()
@@ -212,13 +298,17 @@ class App(tk.Tk):
         pad = {"padx": 10, "pady": 5}
 
         tk.Label(self, text="Type de copie").pack(anchor="w", **pad)
-        ttk.Combobox(
-            self,
-            values=list(MODES.keys()),
+        frame_mode = tk.Frame(self)
+        frame_mode.pack(anchor="w", padx=10)
+        self.mode_combo = ttk.Combobox(
+            frame_mode,
+            values=list(self.modes.keys()),
             textvariable=self.mode,
             state="readonly",
             width=30,
-        ).pack(anchor="w", padx=10)
+        )
+        self.mode_combo.pack(side="left")
+        tk.Button(frame_mode, text="Configurer…", command=self.open_config).pack(side="left", padx=10)
 
         tk.Label(self, text="Dossier fichiers source (.xls)").pack(anchor="w", **pad)
         self.create_selector(self.xls_dir)
@@ -293,6 +383,18 @@ class App(tk.Tk):
             pass
         self.poll_id = self.after(100, self.poll_queue)
 
+    # ---------- CONFIGURATION ----------
+
+    def open_config(self):
+        ConfigEditor(self)
+
+    def apply_modes(self, modes):
+        self.modes = modes
+        self.mode_combo.configure(values=list(modes.keys()))
+        if self.mode.get() not in modes:
+            self.mode.set(next(iter(modes)))
+        self.write_log(f"[INFO] Configuration enregistrée : {CONFIG_FILE}")
+
     # ---------- CONTROLE ----------
 
     def is_running(self):
@@ -330,7 +432,11 @@ class App(tk.Tk):
             return
 
         mode_name = self.mode.get()
-        config = MODES[mode_name]
+        if mode_name not in self.modes:
+            messagebox.showerror("Erreur", "Sélectionne un type de copie")
+            return
+        # Copie : le traitement n'est pas affecté si la config est modifiée pendant qu'il tourne
+        config = copy.deepcopy(self.modes[mode_name])
 
         xls_files, xls_dup = list_by_id(xls_dir, ".xls")
         target_files, target_dup = list_by_id(target_dir, config["TARGET_EXT"])
@@ -428,6 +534,270 @@ class App(tk.Tk):
                     pass
             pythoncom.CoUninitialize()
             self.queue.put(("done",))
+
+
+# ======================
+# EDITEUR DE CONFIGURATION
+# ======================
+class ConfigEditor(tk.Toplevel):
+    """
+    Edition des types de copie. Travaille sur une copie de la configuration :
+    rien n'est modifié tant qu'on n'a pas cliqué sur « Enregistrer ».
+    """
+
+    def __init__(self, app):
+        super().__init__(app)
+        self.app = app
+        self.title("Configuration des types de copie")
+        self.resizable(False, False)
+        self.transient(app)
+
+        self.modes = copy.deepcopy(app.modes)
+        self.current = None  # nom du type affiché dans le formulaire
+
+        self.name_var = tk.StringVar()
+        self.sheet_var = tk.StringVar()
+        self.ext_var = tk.StringVar()
+        self.src_var = tk.StringVar()
+        self.dst_var = tk.StringVar()
+
+        self.create_widgets()
+        self.refresh_list(select=app.mode.get())
+
+        self.protocol("WM_DELETE_WINDOW", self.destroy)
+        self.grab_set()
+
+    # ---------- UI ----------
+
+    def create_widgets(self):
+        left = tk.Frame(self)
+        left.grid(row=0, column=0, sticky="ns", padx=10, pady=10)
+
+        tk.Label(left, text="Types de copie").pack(anchor="w")
+        self.listbox = tk.Listbox(left, width=28, height=17, exportselection=False)
+        self.listbox.pack()
+        self.listbox.bind("<<ListboxSelect>>", self.on_select)
+        tk.Button(left, text="Nouveau", command=self.new_mode).pack(fill="x", pady=(5, 0))
+        tk.Button(left, text="Dupliquer", command=self.duplicate_mode).pack(fill="x", pady=(5, 0))
+        tk.Button(left, text="Supprimer", command=self.delete_mode).pack(fill="x", pady=(5, 0))
+
+        right = tk.Frame(self)
+        right.grid(row=0, column=1, sticky="n", padx=10, pady=10)
+
+        tk.Label(right, text="Nom").grid(row=0, column=0, sticky="w")
+        self.name_entry = tk.Entry(right, textvariable=self.name_var, width=40)
+        self.name_entry.grid(row=0, column=1, sticky="ew", pady=2)
+        tk.Label(right, text="Onglet cible").grid(row=1, column=0, sticky="w")
+        tk.Entry(right, textvariable=self.sheet_var, width=40).grid(row=1, column=1, sticky="ew", pady=2)
+        tk.Label(right, text="Extension cible").grid(row=2, column=0, sticky="w")
+        ttk.Combobox(right, textvariable=self.ext_var, values=TARGET_EXTS,
+                     state="readonly", width=8).grid(row=2, column=1, sticky="w", pady=2)
+
+        tk.Label(right, text="Cellules à copier (source .xls → onglet cible)").grid(
+            row=3, column=0, columnspan=2, sticky="w", pady=(10, 2))
+
+        frame_tree = tk.Frame(right)
+        frame_tree.grid(row=4, column=0, columnspan=2, sticky="w")
+        self.tree = ttk.Treeview(frame_tree, columns=("src", "dst"), show="headings",
+                                 height=9, selectmode="browse")
+        self.tree.heading("src", text="Cellule source")
+        self.tree.heading("dst", text="Cellule cible")
+        self.tree.column("src", width=170, anchor="center")
+        self.tree.column("dst", width=170, anchor="center")
+        self.tree.pack(side="left")
+        scroll = ttk.Scrollbar(frame_tree, orient="vertical", command=self.tree.yview)
+        scroll.pack(side="left", fill="y")
+        self.tree.configure(yscrollcommand=scroll.set)
+        self.tree.bind("<<TreeviewSelect>>", self.on_row_select)
+
+        frame_row = tk.Frame(right)
+        frame_row.grid(row=5, column=0, columnspan=2, sticky="w", pady=5)
+        tk.Label(frame_row, text="Source").pack(side="left")
+        self.src_entry = tk.Entry(frame_row, textvariable=self.src_var, width=7)
+        self.src_entry.pack(side="left", padx=(2, 8))
+        tk.Label(frame_row, text="→ Cible").pack(side="left")
+        dst_entry = tk.Entry(frame_row, textvariable=self.dst_var, width=7)
+        dst_entry.pack(side="left", padx=(2, 8))
+        dst_entry.bind("<Return>", lambda e: self.add_row())
+        tk.Button(frame_row, text="Ajouter / Modifier", command=self.add_row).pack(side="left", padx=2)
+        tk.Button(frame_row, text="Supprimer la ligne", command=self.delete_row).pack(side="left", padx=2)
+
+        bottom = tk.Frame(self)
+        bottom.grid(row=1, column=0, columnspan=2, sticky="ew", padx=10, pady=(0, 10))
+        tk.Button(bottom, text="Restaurer les valeurs d'origine", command=self.restore_defaults).pack(side="left")
+        tk.Button(bottom, text="Enregistrer", width=12, command=self.save).pack(side="right")
+        tk.Button(bottom, text="Annuler", width=12, command=self.destroy).pack(side="right", padx=5)
+
+    def refresh_list(self, select=None):
+        names = list(self.modes.keys())
+        self.listbox.delete(0, "end")
+        for name in names:
+            self.listbox.insert("end", name)
+        index = names.index(select) if select in names else 0
+        self.listbox.selection_set(index)
+        self.listbox.see(index)
+        self.show(names[index])
+
+    def show(self, name):
+        self.current = name
+        cfg = self.modes[name]
+        self.name_var.set(name)
+        self.sheet_var.set(cfg.get("TARGET_SHEET", ""))
+        self.ext_var.set(cfg.get("TARGET_EXT", TARGET_EXTS[0]))
+        self.tree.delete(*self.tree.get_children())
+        for src, dst in cfg.get("SOURCE_CELLS", {}).items():
+            self.tree.insert("", "end", values=(src, dst))
+        self.src_var.set("")
+        self.dst_var.set("")
+
+    def store_form(self):
+        """
+        Reporte le formulaire dans self.modes. Retourne False si le nom est invalide.
+        """
+        if self.current is None:
+            return True
+        name = self.name_var.get().strip()
+        if not name:
+            messagebox.showerror("Erreur", "Le nom du type de copie est vide", parent=self)
+            return False
+        if name != self.current and name in self.modes:
+            messagebox.showerror("Erreur", f"Un type « {name} » existe déjà", parent=self)
+            return False
+
+        cfg = {
+            "TARGET_SHEET": self.sheet_var.get().strip(),
+            "TARGET_EXT": self.ext_var.get(),
+            "SOURCE_CELLS": {self.tree.set(i, "src"): self.tree.set(i, "dst") for i in self.tree.get_children()},
+        }
+        # Reconstruit le dict pour garder l'ordre en cas de renommage
+        self.modes = {(name if k == self.current else k): (cfg if k == self.current else v)
+                      for k, v in self.modes.items()}
+        self.current = name
+        return True
+
+    # ---------- TYPES ----------
+
+    def on_select(self, event=None):
+        selection = self.listbox.curselection()
+        if not selection:
+            return
+        name = self.listbox.get(selection[0])
+        if name == self.current:
+            return
+        if not self.store_form():
+            # On reste sur le type en cours sans effacer ce qui a été saisi
+            self.listbox.selection_clear(0, "end")
+            self.listbox.selection_set(list(self.modes).index(self.current))
+            return
+        self.refresh_list(select=name)
+
+    def unique_name(self, base):
+        name, n = base, 2
+        while name in self.modes:
+            name, n = f"{base} {n}", n + 1
+        return name
+
+    def new_mode(self):
+        if not self.store_form():
+            return
+        name = self.unique_name("Nouveau type")
+        self.modes[name] = {"TARGET_SHEET": "", "TARGET_EXT": TARGET_EXTS[0], "SOURCE_CELLS": {}}
+        self.refresh_list(select=name)
+        self.name_entry.focus_set()
+        self.name_entry.select_range(0, "end")
+
+    def duplicate_mode(self):
+        if not self.store_form():
+            return
+        name = self.unique_name(f"{self.current} (copie)")
+        self.modes[name] = copy.deepcopy(self.modes[self.current])
+        self.refresh_list(select=name)
+        self.name_entry.focus_set()
+        self.name_entry.select_range(0, "end")
+
+    def delete_mode(self):
+        if len(self.modes) == 1:
+            messagebox.showerror("Erreur", "Il faut garder au moins un type de copie", parent=self)
+            return
+        if not messagebox.askyesno("Confirmation", f"Supprimer le type « {self.current} » ?", parent=self):
+            return
+        del self.modes[self.current]
+        self.current = None
+        self.refresh_list()
+
+    def restore_defaults(self):
+        if not messagebox.askyesno(
+            "Confirmation",
+            "Remplacer toute la configuration par les valeurs d'origine ?\n"
+            "Les types ajoutés ou modifiés seront perdus après « Enregistrer ».",
+            parent=self,
+        ):
+            return
+        self.modes = copy.deepcopy(DEFAULT_MODES)
+        self.current = None
+        self.refresh_list()
+
+    # ---------- CELLULES ----------
+
+    def on_row_select(self, event=None):
+        selection = self.tree.selection()
+        if selection:
+            self.src_var.set(self.tree.set(selection[0], "src"))
+            self.dst_var.set(self.tree.set(selection[0], "dst"))
+
+    def add_row(self):
+        src = self.src_var.get().strip().upper().replace("$", "")
+        dst = self.dst_var.get().strip().upper().replace("$", "")
+        for label, cell in (("source", src), ("cible", dst)):
+            if not CELL_RE.match(cell):
+                messagebox.showerror("Erreur", f"Cellule {label} invalide : « {cell} » (exemple : J9)", parent=self)
+                return
+
+        rows = {self.tree.set(i, "src"): i for i in self.tree.get_children()}
+        for s, item in rows.items():
+            if s != src and self.tree.set(item, "dst") == dst:
+                messagebox.showerror("Erreur", f"La cellule cible {dst} reçoit déjà {s}", parent=self)
+                return
+
+        # Une cellule source ne peut aller qu'à une seule cible : on remplace la ligne existante
+        if src in rows:
+            self.tree.item(rows[src], values=(src, dst))
+            item = rows[src]
+        else:
+            item = self.tree.insert("", "end", values=(src, dst))
+        self.tree.selection_set(item)
+        self.tree.see(item)
+        self.src_var.set("")
+        self.dst_var.set("")
+        self.src_entry.focus_set()
+
+    def delete_row(self):
+        for item in self.tree.selection():
+            self.tree.delete(item)
+        self.src_var.set("")
+        self.dst_var.set("")
+
+    # ---------- ENREGISTREMENT ----------
+
+    def save(self):
+        if not self.store_form():
+            return
+        errors = validate_modes(self.modes)
+        if errors:
+            messagebox.showerror("Configuration invalide", "\n".join(errors), parent=self)
+            return
+        try:
+            save_modes(self.modes)
+        except OSError as e:
+            messagebox.showerror(
+                "Erreur",
+                f"Impossible d'enregistrer {CONFIG_FILE} :\n{e}\n\n"
+                "Place l'exe dans un dossier où tu as les droits d'écriture.",
+                parent=self,
+            )
+            return
+        self.app.apply_modes(self.modes)
+        self.destroy()
 
 
 if __name__ == "__main__":

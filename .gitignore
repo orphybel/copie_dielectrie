@@ -2,3 +2,5 @@ build/
 dist/
 *.spec
 __pycache__/
+modes.json
+modes.json.tmp

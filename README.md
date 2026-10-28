@@ -7,14 +7,19 @@ Nécessite Windows et Excel installé (pilotage par COM).
 
 ## Types de copie
 
-Définis dans le dictionnaire `MODES` en tête de `copie_dielectrie_gui.py` : onglet cible, extension cible et correspondance des cellules source → cible. Ajouter un type = ajouter une entrée.
+Un type de copie = onglet cible, extension cible et correspondance des cellules source → cible.
+
+Ils se modifient dans le logiciel avec le bouton **Configurer…** : créer, dupliquer, renommer, supprimer un type, et éditer ses cellules.
+La configuration est enregistrée dans `modes.json`, **à côté de l'exe** (l'exe doit donc être dans un dossier où l'on peut écrire).
+Pour partager une configuration avec un autre poste, copier ce fichier à côté de l'autre exe.
+Sans `modes.json`, ou s'il est invalide, le logiciel utilise les valeurs d'origine (`DEFAULT_MODES` dans `copie_dielectrie_gui.py`) :
 
 | Mode | Onglet cible | Extension |
 |---|---|---|
 | HubView-xT | Test final (1_4) | .xlsm |
 | NVR | Test final (1_4) | .xlsm |
 | HubView-MF19 | Test Final(1_3) | .xlsx |
-| Poste de Locution | Test final (1_4) | .xlsx |
+| Poste de Locution | Test final (1_4) | .xlsm |
 
 ## Récupérer l'exe
 
