@@ -26,7 +26,7 @@ jobs:
         run: python -m PyInstaller --noconfirm --onefile --windowed --name copie_dielectrie_gui copie_dielectrie_gui.py
 
       - name: Publier l'exe (onglet Actions)
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: copie_dielectrie_gui
           path: dist/copie_dielectrie_gui.exe
