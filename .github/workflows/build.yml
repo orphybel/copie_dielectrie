@@ -3,7 +3,8 @@ name: Build exe
 on:
   push:
     branches: [main]
-    tags: ["v*"]
+  release:
+    types: [published]
   workflow_dispatch:
 
 permissions:
@@ -31,8 +32,8 @@ jobs:
           name: copie_dielectrie_gui
           path: dist/copie_dielectrie_gui.exe
 
-      - name: Publier une release (tags v*)
-        if: startsWith(github.ref, 'refs/tags/v')
+      - name: Joindre l'exe à la release
+        if: github.event_name == 'release'
         uses: softprops/action-gh-release@v2
         with:
           files: dist/copie_dielectrie_gui.exe

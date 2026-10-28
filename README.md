@@ -26,12 +26,9 @@ Sans `modes.json`, ou s'il est invalide, le logiciel utilise les valeurs d'origi
 Chaque push sur `main` compile l'exe sur un runner Windows (GitHub Actions) :
 onglet **Actions** → dernier run « Build exe » → section **Artifacts** → `copie_dielectrie_gui`.
 
-Pour une version téléchargeable dans **Releases**, pousser un tag :
-
-```bash
-git tag v1.0.0
-git push origin v1.0.0
-```
+Pour une version téléchargeable dans **Releases** : sur GitHub, **Releases** → **Draft a new release**,
+choisir un nouveau tag (ex. `v1.1.0`) sur `main`, puis **Publish release**.
+L'exe est compilé et joint automatiquement à la release en 1 à 2 minutes.
 
 ## Compiler en local
 
