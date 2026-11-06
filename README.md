@@ -5,6 +5,8 @@ Les fichiers source et cible sont associés par l'identifiant `xxxxxx-yyyyyyy-zz
 
 Nécessite Windows et Excel installé (pilotage par COM).
 
+Mode d'emploi : [Notice_Copie_Dielectrie.pdf](Notice_Copie_Dielectrie.pdf).
+
 ## Types de copie
 
 Un type de copie = onglet cible, extension cible et correspondance des cellules source → cible.
