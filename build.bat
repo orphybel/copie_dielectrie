@@ -10,7 +10,7 @@ if errorlevel 1 (
     exit /b 1
 )
 
-python -m pip install --upgrade pyinstaller pywin32
+python -m pip install --upgrade pyinstaller pywin32 pypdf
 if errorlevel 1 goto :error
 
 python -m PyInstaller --noconfirm --onefile --windowed --name copie_dielectrie_gui copie_dielectrie_gui.py

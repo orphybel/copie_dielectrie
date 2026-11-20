@@ -1,6 +1,6 @@
 # Copie Diélectrie → PV de Test
 
-Recopie les résultats des tests diélectriques (fichiers `.xls` du banc) dans les PV de test Excel (`.xlsm` / `.xlsx`).
+Recopie les résultats des tests diélectriques (fichiers `.xls` ou `.pdf` du banc) dans les PV de test Excel (`.xlsm` / `.xlsx`).
 Les fichiers source et cible sont associés par l'identifiant `xxxxxx-yyyyyyy-zzzzz` présent dans leur nom.
 
 Nécessite Windows et Excel installé (pilotage par COM).
@@ -22,6 +22,14 @@ Sans `modes.json`, ou s'il est invalide, le logiciel utilise les valeurs d'origi
 | NVR | Test final (1_4) | .xlsm |
 | HubView-MF19 | Test Final(1_3) | .xlsx |
 | Poste de Locution | Test final (1_4) | .xlsm |
+
+## Sources PDF
+
+Le PDF produit par le banc (Winpass) contient les mêmes lignes que son export `.xls`, dans le même ordre.
+Il est relu comme une feuille dont les lignes sont numérotées comme dans le `.xls` : les types de copie (`J9`, `J20`…) s'appliquent aux deux formats.
+Seules les colonnes E, F, G, H et J existent pour un PDF. Une ligne du PDF non reconnue arrête le traitement de ce fichier (plutôt que de décaler les mesures).
+Si un même identifiant a un `.xls` et un `.pdf`, le `.xls` est utilisé.
+Le bouton **Aperçu d'un fichier source…** (dans « Configurer… ») affiche les lignes d'un `.xls` ou d'un `.pdf` avec leur cellule J.
 
 ## Récupérer l'exe
 
