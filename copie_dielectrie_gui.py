@@ -19,7 +19,8 @@ from pypdf import PdfReader
 # ======================
 # Valeurs d'origine. La configuration modifiée depuis le logiciel
 # (bouton « Configurer… ») est enregistrée dans modes.json à côté de l'exe.
-# SOURCE_CELLS : {cellule du .xls source : cellule de l'onglet cible}
+# SOURCE_CELLS : {cellule du .xls source : cellule du PV}. La cellule du PV
+# est dans TARGET_SHEET, ou dans un autre onglet avec la notation "Onglet!D20".
 DEFAULT_MODES = {
     "HubView-xT": {
         "TARGET_SHEET": "Test final (1_4)",
@@ -85,6 +86,40 @@ DEFAULT_MODES = {
 
 TARGET_EXTS = (".xlsm", ".xlsx")
 CELL_RE = re.compile(r"^[A-Z]{1,3}[1-9][0-9]*$")
+# Cellule cible : "D20" (dans l'onglet cible du type) ou "Onglet!D20" (notation Excel)
+TARGET_RE = re.compile(r"^(?:(?P<sheet>.+)!)?\$?(?P<col>[A-Za-z]{1,3})\$?(?P<row>[1-9][0-9]*)$")
+
+
+def parse_target(text):
+    """
+    "D20" -> (None, "D20") ; "'Test_final (2)'!$D$19" -> ("Test_final (2)", "D19") ;
+    None si ce n'est pas une cellule valide
+    """
+    m = TARGET_RE.match(str(text).strip())
+    if not m:
+        return None
+    sheet = m["sheet"]
+    if sheet is not None:
+        sheet = sheet.strip()
+        if len(sheet) >= 2 and sheet[0] == sheet[-1] == "'":
+            sheet = sheet[1:-1].strip()
+        if not sheet:
+            return None
+    return sheet, f"{m['col'].upper()}{m['row']}"
+
+
+def format_target(sheet, cell):
+    return f"{sheet}!{cell}" if sheet else cell
+
+
+def same_sheet(a, b):
+    # Comparaison sans les espaces ni la casse, comme pour retrouver l'onglet dans le PV
+    return a.replace(" ", "").lower() == b.replace(" ", "").lower()
+
+
+def target_key(dst, default_sheet):
+    sheet, cell = parse_target(dst)
+    return (sheet or default_sheet).replace(" ", "").lower(), cell
 
 
 def app_dir():
@@ -122,10 +157,12 @@ def validate_modes(modes):
             errors.append(prefix + "aucune cellule à copier")
             continue
         for src, dst in cells.items():
-            if not CELL_RE.match(str(src)) or not CELL_RE.match(str(dst)):
+            if not CELL_RE.match(str(src)) or parse_target(dst) is None:
                 errors.append(prefix + f"cellule invalide : {src} → {dst}")
-        targets = list(cells.values())
-        dups = sorted({str(d) for d in targets if targets.count(d) > 1})
+        default_sheet = str(cfg.get("TARGET_SHEET", ""))
+        valid = [str(d) for d in cells.values() if parse_target(d) is not None]
+        keys = [target_key(d, default_sheet) for d in valid]
+        dups = sorted({d for d, k in zip(valid, keys) if keys.count(k) > 1})
         if dups:
             errors.append(prefix + f"cellule cible utilisée plusieurs fois : {', '.join(dups)}")
     return errors
@@ -313,9 +350,8 @@ def read_xls_rows(path):
 
 
 def find_sheet(workbook, sheet_name):
-    wanted = sheet_name.replace(" ", "")
     for sheet in workbook.Worksheets:
-        if sheet.Name.replace(" ", "") == wanted:
+        if same_sheet(sheet.Name, sheet_name):
             return sheet
     return None
 
@@ -338,12 +374,15 @@ def copy_one(excel, src_path, src_target, dest_target, config):
             wb_xls = None
 
         wb_target = excel.Workbooks.Open(dest_target)
-        ws_target = find_sheet(wb_target, config["TARGET_SHEET"])
-        if ws_target is None:
-            raise ValueError(f"Onglet '{config['TARGET_SHEET']}' introuvable")
-
+        sheets = {}
         for src, dst in config["SOURCE_CELLS"].items():
-            ws_target.Range(dst).Value = values[src]
+            sheet_name, cell = parse_target(dst)
+            sheet_name = sheet_name or config["TARGET_SHEET"]
+            if sheet_name not in sheets:
+                sheets[sheet_name] = find_sheet(wb_target, sheet_name)
+                if sheets[sheet_name] is None:
+                    raise ValueError(f"Onglet '{sheet_name}' introuvable")
+            sheets[sheet_name].Range(cell).Value = values[src]
 
         wb_target.Save()
         saved = True
@@ -702,7 +741,7 @@ class ConfigEditor(tk.Toplevel):
         tk.Label(right, text="Nom").grid(row=0, column=0, sticky="w")
         self.name_entry = tk.Entry(right, textvariable=self.name_var, width=40)
         self.name_entry.grid(row=0, column=1, sticky="ew", pady=2)
-        tk.Label(right, text="Onglet cible").grid(row=1, column=0, sticky="w")
+        tk.Label(right, text="Onglet cible (par défaut)").grid(row=1, column=0, sticky="w")
         tk.Entry(right, textvariable=self.sheet_var, width=40).grid(row=1, column=1, sticky="ew", pady=2)
         tk.Label(right, text="Extension cible").grid(row=2, column=0, sticky="w")
         ttk.Combobox(right, textvariable=self.ext_var, values=TARGET_EXTS,
@@ -719,8 +758,8 @@ class ConfigEditor(tk.Toplevel):
                                  height=9, selectmode="browse")
         self.tree.heading("src", text="Cellule source")
         self.tree.heading("dst", text="Cellule cible")
-        self.tree.column("src", width=170, anchor="center")
-        self.tree.column("dst", width=170, anchor="center")
+        self.tree.column("src", width=120, anchor="center")
+        self.tree.column("dst", width=220, anchor="center")
         self.tree.pack(side="left")
         scroll = ttk.Scrollbar(frame_tree, orient="vertical", command=self.tree.yview)
         scroll.pack(side="left", fill="y")
@@ -733,11 +772,13 @@ class ConfigEditor(tk.Toplevel):
         self.src_entry = tk.Entry(frame_row, textvariable=self.src_var, width=7)
         self.src_entry.pack(side="left", padx=(2, 8))
         tk.Label(frame_row, text="→ Cible").pack(side="left")
-        self.dst_entry = tk.Entry(frame_row, textvariable=self.dst_var, width=7)
+        self.dst_entry = tk.Entry(frame_row, textvariable=self.dst_var, width=20)
         self.dst_entry.pack(side="left", padx=(2, 8))
         self.dst_entry.bind("<Return>", lambda e: self.add_row())
         tk.Button(frame_row, text="Ajouter / Modifier", command=self.add_row).pack(side="left", padx=2)
         tk.Button(frame_row, text="Supprimer la ligne", command=self.delete_row).pack(side="left", padx=2)
+        tk.Label(right, text="Cible : D20 dans l'onglet cible, ou Onglet!D20 pour un autre onglet du PV",
+                 fg="#555555").grid(row=6, column=0, columnspan=2, sticky="w")
 
         bottom = tk.Frame(self)
         bottom.grid(row=1, column=0, columnspan=2, sticky="ew", padx=10, pady=(0, 10))
@@ -864,15 +905,25 @@ class ConfigEditor(tk.Toplevel):
 
     def add_row(self):
         src = self.src_var.get().strip().upper().replace("$", "")
-        dst = self.dst_var.get().strip().upper().replace("$", "")
-        for label, cell in (("source", src), ("cible", dst)):
-            if not CELL_RE.match(cell):
-                messagebox.showerror("Erreur", f"Cellule {label} invalide : « {cell} » (exemple : J9)", parent=self)
-                return
+        target = parse_target(self.dst_var.get())
+        if not CELL_RE.match(src):
+            messagebox.showerror("Erreur", f"Cellule source invalide : « {src} » (exemple : J9)", parent=self)
+            return
+        if target is None:
+            messagebox.showerror("Erreur", f"Cellule cible invalide : « {self.dst_var.get().strip()} » "
+                                 "(exemples : D20, Test_final (2)!D19)", parent=self)
+            return
+        sheet, cell = target
+        default_sheet = self.sheet_var.get().strip()
+        # L'onglet cible du type est implicite : inutile de l'écrire
+        if sheet and same_sheet(sheet, default_sheet):
+            sheet = None
+        dst = format_target(sheet, cell)
 
         rows = {self.tree.set(i, "src"): i for i in self.tree.get_children()}
         for s, item in rows.items():
-            if s != src and self.tree.set(item, "dst") == dst:
+            other = self.tree.set(item, "dst")
+            if s != src and target_key(other, default_sheet) == target_key(dst, default_sheet):
                 messagebox.showerror("Erreur", f"La cellule cible {dst} reçoit déjà {s}", parent=self)
                 return
 

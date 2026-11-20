@@ -11,6 +11,8 @@ Mode d'emploi : [Notice_Copie_Dielectrie.pdf](Notice_Copie_Dielectrie.pdf).
 
 Un type de copie = onglet cible, extension cible et correspondance des cellules source → cible.
 
+Une cellule cible est dans l'onglet cible du type (`D20`), ou dans un autre onglet du PV avec la notation Excel `Onglet!D20` (ex. `Test_final (2)!D19`).
+
 Ils se modifient dans le logiciel avec le bouton **Configurer…** : créer, dupliquer, renommer, supprimer un type, et éditer ses cellules.
 La configuration est enregistrée dans `modes.json`, **à côté de l'exe** (l'exe doit donc être dans un dossier où l'on peut écrire).
 Pour partager une configuration avec un autre poste, copier ce fichier à côté de l'autre exe.
